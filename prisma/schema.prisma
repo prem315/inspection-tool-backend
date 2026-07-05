@@ -1,0 +1,628 @@
+// ─── Prisma Schema ─── Inspection Tool Backend ───
+// Every entity includes deletedAt DateTime? for soft deletes (enforced via middleware)
+// Neon PostgreSQL requires ?sslmode=require on the connection string
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────── Enums ────────────────────────────
+
+enum SystemRole {
+  USER
+  SUPER_ADMIN
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum ProjectRole {
+  OWNER
+  EPC_ENGINEER
+  INSPECTOR
+  VIEWER
+}
+
+enum PlanTier {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum IndustryType {
+  WIND
+  SOLAR
+  HYDRO
+  OIL_GAS
+  POWER_TRANSMISSION
+  INDUSTRIAL_PLANT
+  OTHER
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum StageStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum StageSource {
+  DEFAULT
+  CUSTOM
+}
+
+enum CheckpointResult {
+  PENDING
+  PASS
+  FAIL
+  NOT_APPLICABLE
+}
+
+enum RecorderRole {
+  EPC_ENGINEER
+  INSPECTOR
+}
+
+enum InspectionRequestStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  SCHEDULED
+  OVERDUE
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  REQUEST_SENT
+  REQUEST_ACCEPTED
+  REQUEST_REJECTED
+  DEADLINE_REMINDER
+  DEADLINE_MISSED
+  GRACE_PERIOD_GIVEN
+  STAGE_SUBMITTED
+  STAGE_APPROVED
+  STAGE_REJECTED
+  PROJECT_ASSIGNED
+  INSPECTION_FAILED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  PUSH
+  WEBHOOK
+}
+
+// ──────────────────────────── Models ────────────────────────────
+
+model User {
+  id                     String    @id @default(uuid())
+  name                   String
+  email                  String    @unique
+  phone                  String?
+  passwordHash           String    @db.Text
+  systemRole             SystemRole @default(USER)
+  isActive               Boolean   @default(true)
+  deletedAt              DateTime?
+  avatarUrl              String?   @db.Text
+  isEmailVerified        Boolean   @default(false)
+  emailVerificationToken String?   @db.Text
+  refreshToken           String?   @db.Text
+  passwordResetToken     String?   @db.Text
+  passwordResetExpiry    DateTime?
+  lastLoginAt            DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  // Relations
+  organizationMembers      OrganizationMember[]
+  organizationInvitations  OrganizationInvitation[] @relation("InvitedByUser")
+  projectMembers           ProjectMember[]
+  projectMembersAdded      ProjectMember[]          @relation("AddedByUser")
+  projectInvitations       ProjectInvitation[]      @relation("ProjectInvitedByUser")
+  projectsCreated          Project[]                @relation("CreatedByUser")
+  templatesCreated         ProjectTemplate[]        @relation("TemplateCreatedByUser")
+  inspectionRequestsAsEpc  InspectionRequest[]      @relation("EpcUser")
+  inspectionRequestsAsInsp InspectionRequest[]      @relation("InspectorUser")
+  stageApprovals           StageApproval[]
+  attachments              Attachment[]
+  measurements             Measurement[]
+  checkpointsRecorded      Checkpoint[]             @relation("RecordedByUser")
+  comments                 Comment[]
+  activityLogs             ActivityLog[]
+  notifications            Notification[]
+  notificationPreferences  NotificationPreference[]
+  apiTokens                ApiToken[]
+
+  @@index([email])
+  @@index([systemRole])
+  @@map("users")
+}
+
+model Organization {
+  id        String    @id @default(uuid())
+  name      String
+  slug      String    @unique
+  logoUrl   String?   @db.Text
+  plan      PlanTier  @default(FREE)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // Relations
+  members       OrganizationMember[]
+  invitations   OrganizationInvitation[]
+  projects      Project[]
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+
+  @@index([slug])
+  @@index([plan])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           OrgRole      @default(MEMBER)
+  joinedAt       DateTime     @default(now())
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+model OrganizationInvitation {
+  id             String           @id @default(uuid())
+  organizationId String
+  email          String
+  role           OrgRole          @default(MEMBER)
+  token          String           @unique @db.Text
+  status         InvitationStatus @default(PENDING)
+  invitedById    String
+  expiresAt      DateTime
+  deletedAt      DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  invitedBy    User         @relation("InvitedByUser", fields: [invitedById], references: [id])
+
+  @@unique([organizationId, email])
+  @@map("organization_invitations")
+}
+
+model Project {
+  id             String        @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?       @db.Text
+  location       String?
+  industryType   IndustryType
+  status         ProjectStatus @default(ACTIVE)
+  startDate      DateTime?
+  endDate        DateTime?
+  templateId     String?
+  createdById    String
+  deletedAt      DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id])
+  template     ProjectTemplate? @relation(fields: [templateId], references: [id])
+  createdBy    User             @relation("CreatedByUser", fields: [createdById], references: [id])
+
+  // Relations
+  members       ProjectMember[]
+  invitations   ProjectInvitation[]
+  stages        Stage[]
+  labels        Label[]
+  activityLogs  ActivityLog[]
+  notifications Notification[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([industryType])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String      @id @default(uuid())
+  projectId String
+  userId    String
+  role      ProjectRole
+  addedById String?
+  addedAt   DateTime    @default(now())
+  deletedAt DateTime?
+
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  addedBy User?   @relation("AddedByUser", fields: [addedById], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([role])
+  @@map("project_members")
+}
+
+model ProjectInvitation {
+  id          String           @id @default(uuid())
+  projectId   String
+  email       String
+  projectRole ProjectRole
+  token       String           @unique @db.Text
+  status      InvitationStatus @default(PENDING)
+  invitedById String
+  expiresAt   DateTime
+  deletedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id])
+  invitedBy User    @relation("ProjectInvitedByUser", fields: [invitedById], references: [id])
+
+  @@unique([projectId, email])
+  @@map("project_invitations")
+}
+
+model ProjectTemplate {
+  id           String       @id @default(uuid())
+  name         String
+  description  String?      @db.Text
+  industryType IndustryType
+  isActive     Boolean      @default(true)
+  createdById  String
+  deletedAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  createdBy     User           @relation("TemplateCreatedByUser", fields: [createdById], references: [id])
+  defaultStages DefaultStage[]
+  projects      Project[]
+
+  @@map("project_templates")
+}
+
+model DefaultStage {
+  id           String   @id @default(uuid())
+  templateId   String
+  name         String
+  description  String?  @db.Text
+  displayOrder Int
+  isActive     Boolean  @default(true)
+  deletedAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  template            ProjectTemplate    @relation(fields: [templateId], references: [id])
+  defaultCheckpoints  DefaultCheckpoint[]
+  clonedStages        Stage[]            @relation("ClonedFromDefaultStage")
+
+  @@map("default_stages")
+}
+
+model DefaultCheckpoint {
+  id                String  @id @default(uuid())
+  defaultStageId    String
+  title             String
+  description       String? @db.Text
+  standardReference String?
+  displayOrder      Int
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  defaultStage DefaultStage @relation(fields: [defaultStageId], references: [id])
+
+  @@map("default_checkpoints")
+}
+
+model Stage {
+  id             String      @id @default(uuid())
+  projectId      String
+  name           String
+  description    String?     @db.Text
+  displayOrder   Int
+  status         StageStatus @default(PENDING)
+  source         StageSource @default(CUSTOM)
+  defaultStageId String?
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  project      Project       @relation(fields: [projectId], references: [id])
+  defaultStage DefaultStage? @relation("ClonedFromDefaultStage", fields: [defaultStageId], references: [id])
+
+  checkpoints        Checkpoint[]
+  inspectionRequests InspectionRequest[]
+  stageApprovals     StageApproval[]
+
+  @@map("stages")
+}
+
+model Checkpoint {
+  id                String           @id @default(uuid())
+  stageId           String
+  title             String
+  description       String?          @db.Text
+  standardReference String?
+  displayOrder      Int
+  result            CheckpointResult @default(PENDING)
+  recorderRole      RecorderRole?
+  recordedById      String?
+  notes             String?          @db.Text
+  recordedAt        DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  stage        Stage             @relation(fields: [stageId], references: [id])
+  recordedBy   User?             @relation("RecordedByUser", fields: [recordedById], references: [id])
+  labels       CheckpointLabel[]
+  measurements Measurement[]
+
+  @@map("checkpoints")
+}
+
+model InspectionRequest {
+  id              String                  @id @default(uuid())
+  stageId         String
+  epcId           String
+  inspectorId     String?
+  inspectorEmail  String?
+  status          InspectionRequestStatus @default(DRAFT)
+  token           String                  @unique @db.Text
+  tokenExpiresAt  DateTime?
+  deadlineStart   DateTime?
+  deadlineEnd     DateTime?
+  gracePeriodEnd  DateTime?
+  attemptNumber   Int                     @default(1)
+  rejectionReason String?                 @db.Text
+  respondedAt     DateTime?
+  visitedAt       DateTime?
+  submittedAt     DateTime?
+  deletedAt       DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  stage          Stage          @relation(fields: [stageId], references: [id])
+  epc            User           @relation("EpcUser", fields: [epcId], references: [id])
+  inspector      User?          @relation("InspectorUser", fields: [inspectorId], references: [id])
+  stageApprovals StageApproval[]
+  notifications  Notification[]
+
+  @@index([stageId])
+  @@index([epcId])
+  @@index([inspectorId])
+  @@index([status])
+  @@index([token])
+  @@index([deadlineEnd])
+  @@map("inspection_requests")
+}
+
+model StageApproval {
+  id                   String           @id @default(uuid())
+  stageId              String           @unique
+  inspectionRequestId  String           @unique
+  approvedById         String
+  decision             ApprovalDecision
+  comments             String?          @db.Text
+  decidedAt            DateTime         @default(now())
+  deletedAt            DateTime?
+
+  stage              Stage             @relation(fields: [stageId], references: [id])
+  inspectionRequest  InspectionRequest @relation(fields: [inspectionRequestId], references: [id])
+  approvedBy         User              @relation(fields: [approvedById], references: [id])
+
+  @@map("stage_approvals")
+}
+
+model Attachment {
+  id                String   @id @default(uuid())
+  uploadedById      String
+  entityType        String
+  entityId          String
+  bucket            String
+  key               String
+  fileName          String
+  mimeType          String
+  sizeBytes         Int
+  url               String   @db.Text
+  standardReference String?
+  notes             String?  @db.Text
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([uploadedById])
+  @@map("attachments")
+}
+
+model Measurement {
+  id                String   @id @default(uuid())
+  checkpointId      String
+  recordedById      String
+  value             Float
+  unit              String
+  standardReference String?
+  notes             String?  @db.Text
+  deletedAt         DateTime?
+  recordedAt        DateTime @default(now())
+
+  checkpoint Checkpoint @relation(fields: [checkpointId], references: [id])
+  recordedBy User       @relation(fields: [recordedById], references: [id])
+
+  @@map("measurements")
+}
+
+model Comment {
+  id         String    @id @default(uuid())
+  authorId   String
+  entityType String
+  entityId   String
+  parentId   String?
+  body       String    @db.Text
+  isResolved Boolean   @default(false)
+  editedAt   DateTime?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  author  User     @relation(fields: [authorId], references: [id])
+  parent  Comment? @relation("CommentThread", fields: [parentId], references: [id])
+  replies Comment[] @relation("CommentThread")
+
+  @@index([entityType, entityId])
+  @@index([authorId])
+  @@index([parentId])
+  @@map("comments")
+}
+
+model ActivityLog {
+  id             String   @id @default(uuid())
+  actorId        String?
+  organizationId String?
+  projectId      String?
+  entityType     String
+  entityId       String
+  action         String
+  meta           Json?
+  createdAt      DateTime @default(now())
+
+  actor        User?         @relation(fields: [actorId], references: [id])
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([projectId])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Label {
+  id          String  @id @default(uuid())
+  projectId   String
+  name        String
+  color       String
+  description String?
+  deletedAt   DateTime?
+
+  project     Project          @relation(fields: [projectId], references: [id])
+  checkpoints CheckpointLabel[]
+
+  @@unique([projectId, name])
+  @@map("labels")
+}
+
+model CheckpointLabel {
+  checkpointId String
+  labelId      String
+
+  checkpoint Checkpoint @relation(fields: [checkpointId], references: [id])
+  label      Label      @relation(fields: [labelId], references: [id])
+
+  @@id([checkpointId, labelId])
+  @@map("checkpoint_labels")
+}
+
+model Notification {
+  id                   String              @id @default(uuid())
+  userId               String
+  organizationId       String?
+  projectId            String?
+  inspectionRequestId  String?
+  type                 NotificationType
+  channel              NotificationChannel
+  title                String
+  message              String              @db.Text
+  isRead               Boolean             @default(false)
+  sentAt               DateTime            @default(now())
+  readAt               DateTime?
+  deliveredAt          DateTime?
+  failedAt             DateTime?
+  retryCount           Int                 @default(0)
+  deletedAt            DateTime?
+
+  user               User                @relation(fields: [userId], references: [id])
+  organization       Organization?       @relation(fields: [organizationId], references: [id])
+  project            Project?            @relation(fields: [projectId], references: [id])
+  inspectionRequest  InspectionRequest?  @relation(fields: [inspectionRequestId], references: [id])
+
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id     String           @id @default(uuid())
+  userId String
+  type   NotificationType
+  inApp  Boolean          @default(true)
+  email  Boolean          @default(true)
+  sms    Boolean          @default(false)
+  push   Boolean          @default(true)
+  deletedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, type])
+  @@map("notification_preferences")
+}
+
+model ApiToken {
+  id         String    @id @default(uuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique @db.Text
+  prefix     String
+  scopes     String[]
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("api_tokens")
+}
