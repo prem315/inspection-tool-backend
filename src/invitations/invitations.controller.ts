@@ -2,6 +2,7 @@ import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req } from '@nes
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { InvitationsService } from './invitations.service';
 import { Public } from '../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../auth/guards/org-member.guard';
 import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
@@ -78,6 +79,13 @@ export class InvitationsController {
   // ==========================================
   // Public/Accept endpoints (Org)
   // ==========================================
+
+  @Get('invitations/me')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get my pending invitations' })
+  getMyPendingInvitations(@Req() req: any) {
+    return this.invitationsService.getMyPendingInvitations(req.user.id);
+  }
 
   @Public()
   @Get('invitations/org/token/:token')

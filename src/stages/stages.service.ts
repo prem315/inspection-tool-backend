@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStageDto } from './dto/create-stage.dto';
 import { UpdateStageDto } from './dto/update-stage.dto';
@@ -27,6 +27,7 @@ export class StagesService {
     return stages.map(s => ({
       id: s.id,
       name: s.name,
+      description: s.description,
       displayOrder: s.displayOrder,
       status: s.status,
       source: s.source,
@@ -188,5 +189,144 @@ export class StagesService {
     });
 
     return { message: 'Seeded successfully', stageCount };
+  }
+
+  async approve(stageId: string, userId: string, comments?: string) {
+    const stage = await this.prisma.client.stage.findFirst({
+      where: { id: stageId, deletedAt: null },
+      include: { checkpoints: true }
+    });
+
+    if (!stage) throw new NotFoundException('Stage not found');
+
+    // Decision 13: A Stage cannot be approved if any of its Checkpoints have an unresolved (PENDING or REJECTED) latest approval
+    for (const cp of stage.checkpoints) {
+      if (cp.deletedAt) continue;
+      const latestApproval = await this.prisma.client.checkpointApproval.findFirst({
+        where: { checkpointId: cp.id, deletedAt: null },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (!latestApproval || latestApproval.status !== 'APPROVED') {
+        throw new BadRequestException(
+          `Cannot approve stage. Checkpoint "${cp.title}" is not approved (Status: ${latestApproval?.status || 'PENDING'}).`
+        );
+      }
+    }
+
+    const latestRequest = await this.prisma.client.inspectionRequest.findFirst({
+      where: { stageId, deletedAt: null },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!latestRequest) {
+      throw new BadRequestException('Cannot approve stage without an inspection request');
+    }
+
+    const approval = await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.stageApproval.findUnique({ where: { stageId } });
+      let stageApp;
+      if (existing) {
+        stageApp = await tx.stageApproval.update({
+          where: { stageId },
+          data: {
+            inspectionRequestId: latestRequest.id,
+            approvedById: userId,
+            decision: 'APPROVED',
+            comments: comments || 'Approved manually',
+            decidedAt: new Date(),
+          }
+        });
+      } else {
+        stageApp = await tx.stageApproval.create({
+          data: {
+            stageId,
+            inspectionRequestId: latestRequest.id,
+            approvedById: userId,
+            decision: 'APPROVED',
+            comments: comments || 'Approved manually',
+          }
+        });
+      }
+
+      await tx.stage.update({
+        where: { id: stageId },
+        data: { status: 'APPROVED' }
+      });
+
+      return stageApp;
+    });
+
+    await this.activityService.log({
+      actorId: userId,
+      projectId: stage.projectId,
+      entityType: 'stage',
+      entityId: stageId,
+      action: 'approved',
+    });
+
+    return approval;
+  }
+
+  async reject(stageId: string, userId: string, comments: string) {
+    const stage = await this.prisma.client.stage.findFirst({
+      where: { id: stageId, deletedAt: null }
+    });
+
+    if (!stage) throw new NotFoundException('Stage not found');
+
+    const latestRequest = await this.prisma.client.inspectionRequest.findFirst({
+      where: { stageId, deletedAt: null },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!latestRequest) {
+      throw new BadRequestException('Cannot reject stage without an inspection request');
+    }
+
+    const approval = await this.prisma.client.$transaction(async (tx) => {
+      const existing = await tx.stageApproval.findUnique({ where: { stageId } });
+      let stageApp;
+      if (existing) {
+        stageApp = await tx.stageApproval.update({
+          where: { stageId },
+          data: {
+            inspectionRequestId: latestRequest.id,
+            approvedById: userId,
+            decision: 'REJECTED',
+            comments,
+            decidedAt: new Date(),
+          }
+        });
+      } else {
+        stageApp = await tx.stageApproval.create({
+          data: {
+            stageId,
+            inspectionRequestId: latestRequest.id,
+            approvedById: userId,
+            decision: 'REJECTED',
+            comments,
+          }
+        });
+      }
+
+      await tx.stage.update({
+        where: { id: stageId },
+        data: { status: 'REJECTED' }
+      });
+
+      return stageApp;
+    });
+
+    await this.activityService.log({
+      actorId: userId,
+      projectId: stage.projectId,
+      entityType: 'stage',
+      entityId: stageId,
+      action: 'rejected',
+      meta: { comments },
+    });
+
+    return approval;
   }
 }

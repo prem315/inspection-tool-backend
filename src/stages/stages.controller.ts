@@ -4,6 +4,7 @@ import { StagesService } from './stages.service';
 import { CreateStageDto } from './dto/create-stage.dto';
 import { UpdateStageDto } from './dto/update-stage.dto';
 import { ReorderStagesDto } from './dto/reorder-stages.dto';
+import { ApproveStageDto, RejectStageDto } from './dto/approve-reject-stage.dto';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
 import { ProjectRoles } from '../auth/decorators/project-roles.decorator';
 import { ProjectRole } from '@prisma/client';
@@ -75,5 +76,27 @@ export class StagesController {
     @Req() req: any,
   ) {
     return this.stagesService.seed(projectId, templateId, req.user.id);
+  }
+
+  @Post(':stageId/approve')
+  @ProjectRoles(ProjectRole.OWNER)
+  @ApiOperation({ summary: 'Approve a stage manually' })
+  approve(
+    @Param('stageId') stageId: string,
+    @Body() dto: ApproveStageDto,
+    @Req() req: any,
+  ) {
+    return this.stagesService.approve(stageId, req.user.id, dto.comments);
+  }
+
+  @Post(':stageId/reject')
+  @ProjectRoles(ProjectRole.OWNER)
+  @ApiOperation({ summary: 'Reject a stage' })
+  reject(
+    @Param('stageId') stageId: string,
+    @Body() dto: RejectStageDto,
+    @Req() req: any,
+  ) {
+    return this.stagesService.reject(stageId, req.user.id, dto.comments);
   }
 }

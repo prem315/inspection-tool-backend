@@ -95,6 +95,13 @@ enum InspectionRequestStatus {
   COMPLETED
   FAILED
   CANCELLED
+  DECLINED
+}
+
+enum CheckpointApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ApprovalDecision {
@@ -127,23 +134,23 @@ enum NotificationChannel {
 // ──────────────────────────── Models ────────────────────────────
 
 model User {
-  id                     String    @id @default(uuid())
+  id                     String     @id @default(uuid())
   name                   String
-  email                  String    @unique
+  email                  String     @unique
   phone                  String?
-  passwordHash           String    @db.Text
+  passwordHash           String     @db.Text
   systemRole             SystemRole @default(USER)
-  isActive               Boolean   @default(true)
+  isActive               Boolean    @default(true)
   deletedAt              DateTime?
-  avatarUrl              String?   @db.Text
-  isEmailVerified        Boolean   @default(false)
-  emailVerificationToken String?   @db.Text
-  refreshToken           String?   @db.Text
-  passwordResetToken     String?   @db.Text
+  avatarUrl              String?    @db.Text
+  isEmailVerified        Boolean    @default(false)
+  emailVerificationToken String?    @db.Text
+  refreshToken           String?    @db.Text
+  passwordResetToken     String?    @db.Text
   passwordResetExpiry    DateTime?
   lastLoginAt            DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
 
   // Relations
   organizationMembers      OrganizationMember[]
@@ -156,6 +163,7 @@ model User {
   inspectionRequestsAsEpc  InspectionRequest[]      @relation("EpcUser")
   inspectionRequestsAsInsp InspectionRequest[]      @relation("InspectorUser")
   stageApprovals           StageApproval[]
+  checkpointApprovalsGiven CheckpointApproval[]     @relation("CheckpointApprovedByUser")
   attachments              Attachment[]
   measurements             Measurement[]
   checkpointsRecorded      Checkpoint[]             @relation("RecordedByUser")
@@ -173,7 +181,7 @@ model User {
 model Organization {
   id        String    @id @default(uuid())
   name      String
-  slug      String    @unique
+  slug      String
   logoUrl   String?   @db.Text
   plan      PlanTier  @default(FREE)
   isActive  Boolean   @default(true)
@@ -194,11 +202,11 @@ model Organization {
 }
 
 model OrganizationMember {
-  id             String       @id @default(uuid())
+  id             String    @id @default(uuid())
   organizationId String
   userId         String
-  role           OrgRole      @default(MEMBER)
-  joinedAt       DateTime     @default(now())
+  role           OrgRole   @default(MEMBER)
+  joinedAt       DateTime  @default(now())
   deletedAt      DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id])
@@ -323,33 +331,33 @@ model ProjectTemplate {
 }
 
 model DefaultStage {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   templateId   String
   name         String
-  description  String?  @db.Text
+  description  String?   @db.Text
   displayOrder Int
-  isActive     Boolean  @default(true)
+  isActive     Boolean   @default(true)
   deletedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  template            ProjectTemplate    @relation(fields: [templateId], references: [id])
-  defaultCheckpoints  DefaultCheckpoint[]
-  clonedStages        Stage[]            @relation("ClonedFromDefaultStage")
+  template           ProjectTemplate     @relation(fields: [templateId], references: [id])
+  defaultCheckpoints DefaultCheckpoint[]
+  clonedStages       Stage[]             @relation("ClonedFromDefaultStage")
 
   @@map("default_stages")
 }
 
 model DefaultCheckpoint {
-  id                String  @id @default(uuid())
+  id                String    @id @default(uuid())
   defaultStageId    String
   title             String
-  description       String? @db.Text
+  description       String?   @db.Text
   standardReference String?
   displayOrder      Int
   deletedAt         DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   defaultStage DefaultStage @relation(fields: [defaultStageId], references: [id])
 
@@ -395,10 +403,12 @@ model Checkpoint {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
-  stage        Stage             @relation(fields: [stageId], references: [id])
-  recordedBy   User?             @relation("RecordedByUser", fields: [recordedById], references: [id])
-  labels       CheckpointLabel[]
-  measurements Measurement[]
+  stage               Stage                @relation(fields: [stageId], references: [id])
+  recordedBy          User?                @relation("RecordedByUser", fields: [recordedById], references: [id])
+  labels              CheckpointLabel[]
+  measurements        Measurement[]
+  checkpointApprovals CheckpointApproval[]
+  inspectionRequests  InspectionRequest[]  @relation("RequestToCheckpoints")
 
   @@map("checkpoints")
 }
@@ -424,11 +434,13 @@ model InspectionRequest {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
-  stage          Stage          @relation(fields: [stageId], references: [id])
-  epc            User           @relation("EpcUser", fields: [epcId], references: [id])
-  inspector      User?          @relation("InspectorUser", fields: [inspectorId], references: [id])
+  stage          Stage           @relation(fields: [stageId], references: [id])
+  epc            User            @relation("EpcUser", fields: [epcId], references: [id])
+  inspector      User?           @relation("InspectorUser", fields: [inspectorId], references: [id])
   stageApprovals StageApproval[]
   notifications  Notification[]
+
+  checkpoints         Checkpoint[] @relation("RequestToCheckpoints")
 
   @@index([stageId])
   @@index([epcId])
@@ -440,24 +452,39 @@ model InspectionRequest {
 }
 
 model StageApproval {
-  id                   String           @id @default(uuid())
-  stageId              String           @unique
-  inspectionRequestId  String           @unique
-  approvedById         String
-  decision             ApprovalDecision
-  comments             String?          @db.Text
-  decidedAt            DateTime         @default(now())
-  deletedAt            DateTime?
+  id                  String           @id @default(uuid())
+  stageId             String           @unique
+  inspectionRequestId String           @unique
+  approvedById        String
+  decision            ApprovalDecision
+  comments            String?          @db.Text
+  decidedAt           DateTime         @default(now())
+  deletedAt           DateTime?
 
-  stage              Stage             @relation(fields: [stageId], references: [id])
-  inspectionRequest  InspectionRequest @relation(fields: [inspectionRequestId], references: [id])
-  approvedBy         User              @relation(fields: [approvedById], references: [id])
+  stage             Stage             @relation(fields: [stageId], references: [id])
+  inspectionRequest InspectionRequest @relation(fields: [inspectionRequestId], references: [id])
+  approvedBy        User              @relation(fields: [approvedById], references: [id])
 
   @@map("stage_approvals")
 }
 
+model CheckpointApproval {
+  id           String                   @id @default(uuid())
+  checkpointId String
+  status       CheckpointApprovalStatus @default(PENDING)
+  comments     String?                  @db.Text
+  approvedById String?
+  createdAt    DateTime                 @default(now())
+  deletedAt    DateTime?
+
+  checkpoint Checkpoint @relation(fields: [checkpointId], references: [id])
+  approvedBy User?      @relation("CheckpointApprovedByUser", fields: [approvedById], references: [id])
+
+  @@map("checkpoint_approvals")
+}
+
 model Attachment {
-  id                String   @id @default(uuid())
+  id                String    @id @default(uuid())
   uploadedById      String
   entityType        String
   entityId          String
@@ -466,11 +493,11 @@ model Attachment {
   fileName          String
   mimeType          String
   sizeBytes         Int
-  url               String   @db.Text
+  url               String    @db.Text
   standardReference String?
-  notes             String?  @db.Text
+  notes             String?   @db.Text
   deletedAt         DateTime?
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
 
   uploadedBy User @relation(fields: [uploadedById], references: [id])
 
@@ -480,15 +507,15 @@ model Attachment {
 }
 
 model Measurement {
-  id                String   @id @default(uuid())
+  id                String    @id @default(uuid())
   checkpointId      String
   recordedById      String
   value             Float
   unit              String
   standardReference String?
-  notes             String?  @db.Text
+  notes             String?   @db.Text
   deletedAt         DateTime?
-  recordedAt        DateTime @default(now())
+  recordedAt        DateTime  @default(now())
 
   checkpoint Checkpoint @relation(fields: [checkpointId], references: [id])
   recordedBy User       @relation(fields: [recordedById], references: [id])
@@ -509,8 +536,8 @@ model Comment {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
-  author  User     @relation(fields: [authorId], references: [id])
-  parent  Comment? @relation("CommentThread", fields: [parentId], references: [id])
+  author  User      @relation(fields: [authorId], references: [id])
+  parent  Comment?  @relation("CommentThread", fields: [parentId], references: [id])
   replies Comment[] @relation("CommentThread")
 
   @@index([entityType, entityId])
@@ -542,14 +569,14 @@ model ActivityLog {
 }
 
 model Label {
-  id          String  @id @default(uuid())
+  id          String    @id @default(uuid())
   projectId   String
   name        String
   color       String
   description String?
   deletedAt   DateTime?
 
-  project     Project          @relation(fields: [projectId], references: [id])
+  project     Project           @relation(fields: [projectId], references: [id])
   checkpoints CheckpointLabel[]
 
   @@unique([projectId, name])
@@ -568,39 +595,39 @@ model CheckpointLabel {
 }
 
 model Notification {
-  id                   String              @id @default(uuid())
-  userId               String
-  organizationId       String?
-  projectId            String?
-  inspectionRequestId  String?
-  type                 NotificationType
-  channel              NotificationChannel
-  title                String
-  message              String              @db.Text
-  isRead               Boolean             @default(false)
-  sentAt               DateTime            @default(now())
-  readAt               DateTime?
-  deliveredAt          DateTime?
-  failedAt             DateTime?
-  retryCount           Int                 @default(0)
-  deletedAt            DateTime?
+  id                  String              @id @default(uuid())
+  userId              String
+  organizationId      String?
+  projectId           String?
+  inspectionRequestId String?
+  type                NotificationType
+  channel             NotificationChannel
+  title               String
+  message             String              @db.Text
+  isRead              Boolean             @default(false)
+  sentAt              DateTime            @default(now())
+  readAt              DateTime?
+  deliveredAt         DateTime?
+  failedAt            DateTime?
+  retryCount          Int                 @default(0)
+  deletedAt           DateTime?
 
-  user               User                @relation(fields: [userId], references: [id])
-  organization       Organization?       @relation(fields: [organizationId], references: [id])
-  project            Project?            @relation(fields: [projectId], references: [id])
-  inspectionRequest  InspectionRequest?  @relation(fields: [inspectionRequestId], references: [id])
+  user              User               @relation(fields: [userId], references: [id])
+  organization      Organization?      @relation(fields: [organizationId], references: [id])
+  project           Project?           @relation(fields: [projectId], references: [id])
+  inspectionRequest InspectionRequest? @relation(fields: [inspectionRequestId], references: [id])
 
   @@map("notifications")
 }
 
 model NotificationPreference {
-  id     String           @id @default(uuid())
-  userId String
-  type   NotificationType
-  inApp  Boolean          @default(true)
-  email  Boolean          @default(true)
-  sms    Boolean          @default(false)
-  push   Boolean          @default(true)
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  inApp     Boolean          @default(true)
+  email     Boolean          @default(true)
+  sms       Boolean          @default(false)
+  push      Boolean          @default(true)
   deletedAt DateTime?
 
   user User @relation(fields: [userId], references: [id])

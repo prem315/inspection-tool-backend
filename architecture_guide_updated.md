@@ -1233,6 +1233,9 @@ Restricting org creation to SUPER_ADMIN creates a manual provisioning bottleneck
 ### Decision 12: Soft Deletes Everywhere
 Hard deletes are irreversible. `deletedAt` timestamps cost nothing at schema design time but are impossible to retrofit after data is gone. Enforced globally via Prisma middleware.
 
+### Decision 13: Stage Approval Depends on Checkpoint Approval
+A Stage cannot be approved if any of its Checkpoints have an unresolved (PENDING or REJECTED) latest approval. This ensures Checkpoint approval is a strict business rule, preventing an "approved" stage from containing rejected or pending work. If all checkpoints in a stage are approved, the Stage becomes automatically approved.
+
 ---
 
 ## 19. Production Non-Negotiables (Build on Day 1)

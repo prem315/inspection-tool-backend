@@ -18,6 +18,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard.js';
 import { RolesGuard } from './auth/guards/roles.guard.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
+import { InspectionRequestsModule } from './inspection-requests/inspection-requests.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { AppService } from './app.service.js';
     StagesModule,
     CheckpointsModule,
     LabelsModule,
+    InspectionRequestsModule,
   ],
   controllers: [AppController],
   providers: [

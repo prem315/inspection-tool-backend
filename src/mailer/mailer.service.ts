@@ -146,6 +146,37 @@ export class MailerService {
     token: string,
   ): Promise<void> {
     this.logger.log(`[STUB] sendProjectInvitation to ${to} for project ${projectName} by ${inviterName} with token ${token}`);
-    // return Promise.resolve(); // Returning void intrinsically
+  }
+
+  async sendInspectionRequest(
+    to: string,
+    epcName: string,
+    projectName: string,
+    stageName: string,
+    token: string,
+  ): Promise<void> {
+    try {
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+      await this.transporter.sendMail({
+        from: `Inspection Tool <${this.fromEmail}>`,
+        to,
+        subject: `Inspection Request for ${stageName} at ${projectName}`,
+        text: [
+          `Hi,`,
+          '',
+          `${epcName} has assigned you to inspect ${stageName} for the project ${projectName}.`,
+          '',
+          'View your inspection request here:',
+          `${frontendUrl}/inspection-requests/verify?token=${token}`,
+          '',
+          'If you do not have an account, you will be prompted to create one.',
+        ].join('\n'),
+      });
+      this.logger.log(`Inspection request email sent to ${to}`);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to send inspection request email to ${to}: ${error.message}`,
+      );
+    }
   }
 }

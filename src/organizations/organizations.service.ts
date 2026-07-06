@@ -30,11 +30,11 @@ export class OrganizationsService {
   // --------------------------------------------------------------------------
 
   async createOrganization(userId: string, dto: CreateOrganizationDto) {
-    const existingSlug = await this.prisma.client.organization.findUnique({
+    const existing = await this.prisma.client.organization.findFirst({
       where: { slug: dto.slug },
     });
 
-    if (existingSlug) {
+    if (existing) {
       throw new ConflictException('This slug is already taken');
     }
 
@@ -78,6 +78,7 @@ export class OrganizationsService {
         userId,
         organization: {
           isActive: true,
+          deletedAt: null,
         },
       },
       include: {
@@ -124,7 +125,7 @@ export class OrganizationsService {
       },
     });
 
-    if (!org || !org.isActive) {
+    if (!org || !org.isActive || org.deletedAt) {
       throw new NotFoundException('Organization not found');
     }
 
@@ -442,16 +443,17 @@ export class OrganizationsService {
       throw new ConflictException('This user is already a member');
     }
 
-    const existingPending = await this.prisma.client.organizationInvitation.findFirst({
+    const existingInvitation = await this.prisma.client.organizationInvitation.findFirst({
       where: {
         organizationId: orgId,
         email: dto.email,
-        status: InvitationStatus.PENDING,
       },
     });
 
-    if (existingPending) {
-      throw new ConflictException('An invitation is already pending for this email');
+    if (existingInvitation) {
+      if (existingInvitation.status === InvitationStatus.PENDING) {
+        throw new ConflictException('An invitation is already pending for this email');
+      }
     }
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -461,17 +463,30 @@ export class OrganizationsService {
     const inviter = await this.prisma.client.user.findUnique({ where: { id: invitedById } });
     const org = await this.prisma.client.organization.findUnique({ where: { id: orgId } });
 
-    await this.prisma.client.organizationInvitation.create({
-      data: {
-        organizationId: orgId,
-        email: dto.email,
-        role: dto.role,
-        token,
-        status: InvitationStatus.PENDING,
-        invitedById,
-        expiresAt,
-      },
-    });
+    if (existingInvitation) {
+      await this.prisma.client.organizationInvitation.update({
+        where: { id: existingInvitation.id },
+        data: {
+          role: dto.role,
+          token,
+          status: InvitationStatus.PENDING,
+          invitedById,
+          expiresAt,
+        },
+      });
+    } else {
+      await this.prisma.client.organizationInvitation.create({
+        data: {
+          organizationId: orgId,
+          email: dto.email,
+          role: dto.role,
+          token,
+          status: InvitationStatus.PENDING,
+          invitedById,
+          expiresAt,
+        },
+      });
+    }
 
     await this.mailerService.sendOrgInvitation(dto.email, inviter!.name, org!.name, token, dto.role);
 

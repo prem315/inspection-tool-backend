@@ -4,6 +4,7 @@ import { CheckpointsService } from './checkpoints.service';
 import { CreateCheckpointDto } from './dto/create-checkpoint.dto';
 import { UpdateCheckpointDto } from './dto/update-checkpoint.dto';
 import { RecordCheckpointDto } from './dto/record-checkpoint.dto';
+import { RejectCheckpointDto } from './dto/reject-checkpoint.dto';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
 import { ProjectRoles } from '../auth/decorators/project-roles.decorator';
 import { ProjectRole } from '@prisma/client';
@@ -69,5 +70,23 @@ export class CheckpointsController {
     @Req() req: any,
   ) {
     return this.checkpointsService.removeLabel(checkpointId, labelId, req.user.id);
+  }
+
+  @Post(':checkpointId/approve')
+  @ProjectRoles(ProjectRole.OWNER)
+  @ApiOperation({ summary: 'Approve a checkpoint' })
+  approve(@Param('checkpointId') checkpointId: string, @Req() req: any) {
+    return this.checkpointsService.approve(checkpointId, req.user.id);
+  }
+
+  @Post(':checkpointId/reject')
+  @ProjectRoles(ProjectRole.OWNER)
+  @ApiOperation({ summary: 'Reject a checkpoint' })
+  reject(
+    @Param('checkpointId') checkpointId: string,
+    @Body() dto: RejectCheckpointDto,
+    @Req() req: any,
+  ) {
+    return this.checkpointsService.reject(checkpointId, req.user.id, dto.comments);
   }
 }

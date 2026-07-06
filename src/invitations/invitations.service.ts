@@ -144,6 +144,57 @@ export class InvitationsService {
     });
   }
 
+  async getMyPendingInvitations(userId: string) {
+    const user = await this.prisma.client.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const orgInvitations = await this.prisma.client.organizationInvitation.findMany({
+      where: { email: user.email, status: InvitationStatus.PENDING },
+      include: {
+        organization: { select: { id: true, name: true, logoUrl: true } },
+        invitedBy: { select: { name: true } }
+      }
+    });
+
+    const projectInvitations = await this.prisma.client.projectInvitation.findMany({
+      where: { email: user.email, status: InvitationStatus.PENDING },
+      include: {
+        project: { 
+          select: { 
+            id: true, 
+            name: true, 
+            organization: { select: { id: true, name: true, logoUrl: true } } 
+          } 
+        },
+        invitedBy: { select: { name: true } }
+      }
+    });
+    
+    const unified = [
+      ...orgInvitations.map(inv => ({
+        id: inv.id,
+        type: 'organization',
+        token: inv.token,
+        organization: inv.organization,
+        invitedBy: inv.invitedBy,
+        role: inv.role,
+        createdAt: inv.createdAt
+      })),
+      ...projectInvitations.map(inv => ({
+        id: inv.id,
+        type: 'project',
+        token: inv.token,
+        organization: inv.project.organization,
+        project: { id: inv.project.id, name: inv.project.name },
+        invitedBy: inv.invitedBy,
+        role: inv.projectRole,
+        createdAt: inv.createdAt
+      }))
+    ];
+    
+    return unified.sort((a: any, b: any) => b.createdAt.getTime() - a.createdAt.getTime());
+  }
+
   // ==========================================
   // Project Invitations
   // ==========================================
