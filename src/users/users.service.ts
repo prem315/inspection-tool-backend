@@ -19,7 +19,7 @@ export class UsersService {
   ) {}
 
   private toSafeUser(user: any) {
-    const { passwordHash, refreshToken, emailVerificationToken, passwordResetToken, passwordResetExpiry, ...safeUser } = user;
+    const { passwordHash, refreshToken, passwordResetToken, passwordResetExpiry, ...safeUser } = user;
     return safeUser;
   }
 
@@ -155,7 +155,10 @@ export class UsersService {
 
     const tempPassword = crypto.randomBytes(8).toString('hex');
     const passwordHash = await bcrypt.hash(tempPassword, 12);
-    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const user = await this.prismaService.client.user.create({
       data: {
@@ -164,11 +167,16 @@ export class UsersService {
         passwordHash,
         systemRole: dto.systemRole || 'USER',
         isEmailVerified: false,
-        emailVerificationToken,
+        emailVerificationTokens: {
+          create: {
+            tokenHash,
+            expiresAt,
+          },
+        },
       },
     });
 
-    await this.mailerService.sendEmailVerification(dto.email, dto.name, emailVerificationToken);
+    await this.mailerService.sendEmailVerification(dto.email, dto.name, rawToken);
 
     await this.prismaService.client.activityLog.create({
       data: {

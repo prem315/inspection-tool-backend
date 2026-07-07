@@ -17,6 +17,7 @@ describe('OrganizationsService (Core Endpoints)', () => {
     const mockPrisma = {
       client: {
         organization: {
+          findFirst: jest.fn(),
           findUnique: jest.fn(),
           create: jest.fn(),
           update: jest.fn(),
@@ -65,7 +66,7 @@ describe('OrganizationsService (Core Endpoints)', () => {
     const dto: CreateOrganizationDto = { name: 'My Org', slug: 'my-org' };
 
     it('should successfully create an organization and membership in transaction', async () => {
-      prisma.client.organization.findUnique.mockResolvedValue(null);
+      prisma.client.organization.findFirst.mockResolvedValue(null);
       
       const createdOrg = { id: 'org-1', name: 'My Org', slug: 'my-org', plan: PlanTier.FREE, isActive: true };
       const createdMember = { id: 'member-1', organizationId: 'org-1', userId: 'user-1', role: OrgRole.OWNER };
@@ -88,12 +89,12 @@ describe('OrganizationsService (Core Endpoints)', () => {
 
       const result = await service.createOrganization('user-1', dto);
 
-      expect(prisma.client.organization.findUnique).toHaveBeenCalledWith({ where: { slug: 'my-org' } });
+      expect(prisma.client.organization.findFirst).toHaveBeenCalledWith({ where: { slug: 'my-org' } });
       expect(result).toEqual({ organization: createdOrg, membership: createdMember });
     });
 
     it('should throw ConflictException if slug is already taken', async () => {
-      prisma.client.organization.findUnique.mockResolvedValue({ id: 'existing-org' });
+      prisma.client.organization.findFirst.mockResolvedValue({ id: 'existing-org' });
 
       await expect(service.createOrganization('user-1', dto)).rejects.toThrow(ConflictException);
     });

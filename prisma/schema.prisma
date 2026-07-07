@@ -144,7 +144,6 @@ model User {
   deletedAt              DateTime?
   avatarUrl              String?    @db.Text
   isEmailVerified        Boolean    @default(false)
-  emailVerificationToken String?    @db.Text
   refreshToken           String?    @db.Text
   passwordResetToken     String?    @db.Text
   passwordResetExpiry    DateTime?
@@ -172,10 +171,23 @@ model User {
   notifications            Notification[]
   notificationPreferences  NotificationPreference[]
   apiTokens                ApiToken[]
+  emailVerificationTokens  EmailVerificationToken[]
 
   @@index([email])
   @@index([systemRole])
   @@map("users")
+}
+
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique @db.Text
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 model Organization {

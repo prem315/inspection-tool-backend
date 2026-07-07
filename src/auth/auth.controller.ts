@@ -36,6 +36,17 @@ export class AuthController {
     return this.authService.verifyEmail(dto);
   }
 
+  @ApiBearerAuth()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 3600000 } })
+  @ApiOperation({ summary: 'Resend verification email' })
+  @ApiResponse({ status: 200, description: 'Verification email resent.' })
+  @ApiResponse({ status: 400, description: 'Already verified or user not found.' })
+  async resendVerification(@CurrentUser('id') userId: string) {
+    return this.authService.resendVerification(userId);
+  }
+
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)

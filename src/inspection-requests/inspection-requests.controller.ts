@@ -6,6 +6,7 @@ import { AcceptInspectionRequestDto } from './dto/accept-inspection-request.dto'
 import { DeclineInspectionRequestDto } from './dto/decline-inspection-request.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
+import { EmailVerifiedGuard } from '../auth/guards/email-verified.guard';
 import { ProjectRoles } from '../auth/decorators/project-roles.decorator';
 import { ProjectRole } from '@prisma/client';
 import { Public } from '../common/decorators/public.decorator';
@@ -23,7 +24,7 @@ export class InspectionRequestsController {
   }
 
   @Post('organizations/:orgId/projects/:projectId/inspection-requests')
-  @UseGuards(JwtAuthGuard, ProjectMemberGuard)
+  @UseGuards(JwtAuthGuard, EmailVerifiedGuard, ProjectMemberGuard)
   @ProjectRoles(ProjectRole.OWNER, ProjectRole.EPC_ENGINEER)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Create an inspection request' })
