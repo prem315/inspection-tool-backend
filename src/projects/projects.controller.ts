@@ -5,6 +5,7 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { OrgMemberGuard } from '../auth/guards/org-member.guard';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
+import { EmailVerifiedGuard } from '../auth/guards/email-verified.guard';
 import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { ProjectRoles } from '../auth/decorators/project-roles.decorator';
 import { OrgRole, ProjectRole } from '@prisma/client';
@@ -16,7 +17,7 @@ export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   @Post()
-  @UseGuards(OrgMemberGuard)
+  @UseGuards(EmailVerifiedGuard, OrgMemberGuard)
   @OrgRoles(OrgRole.OWNER, OrgRole.ADMIN)
   @ApiOperation({ summary: 'Create project' })
   create(

@@ -28,17 +28,17 @@ export class AuthService {
   ) {}
 
   private toSafeUser(user: any) {
-    const { passwordHash, refreshToken, emailVerificationToken, passwordResetToken, passwordResetExpiry, ...safeUser } = user;
+    const { passwordHash, refreshToken, passwordResetToken, passwordResetExpiry, ...safeUser } = user;
     return safeUser;
   }
 
   private generateTokenPair(user: any) {
     const accessToken = this.jwtService.sign(
-      { sub: user.id, email: user.email, systemRole: user.systemRole },
+      { sub: user.id, email: user.email, systemRole: user.systemRole, isEmailVerified: user.isEmailVerified },
       { secret: this.configService.get('JWT_ACCESS_SECRET'), expiresIn: this.configService.get('JWT_ACCESS_EXPIRY', '15m') },
     );
     const refreshToken = this.jwtService.sign(
-      { sub: user.id, email: user.email, systemRole: user.systemRole },
+      { sub: user.id, email: user.email, systemRole: user.systemRole, isEmailVerified: user.isEmailVerified },
       { secret: this.configService.get('JWT_REFRESH_SECRET'), expiresIn: this.configService.get('JWT_REFRESH_EXPIRY', '7d') },
     );
     return { accessToken, refreshToken };
@@ -48,15 +48,23 @@ export class AuthService {
     const existingUser = await this.prismaService.client.user.findFirst({
       where: { email: dto.email, deletedAt: null },
     });
+    
+    if (existingUser) {
+      if (!existingUser.isEmailVerified) {
+        await this.resendVerification(existingUser.id);
+        return { message: 'Registration successful. Please verify your email.' };
+      }
+      throw new ConflictException('Email already registered');
+    }
+
     const softDeletedUser = await this.prismaService.client.user.findFirst({
       where: { email: dto.email, deletedAt: { not: null } },
     });
-    if (existingUser || softDeletedUser) {
+    if (softDeletedUser) {
       throw new ConflictException('Email already registered');
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
-    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
 
     const user = await this.prismaService.client.user.create({
       data: {
@@ -65,11 +73,10 @@ export class AuthService {
         passwordHash,
         systemRole: 'USER',
         isEmailVerified: false,
-        emailVerificationToken,
       },
     });
 
-    await this.mailerService.sendEmailVerification(dto.email, dto.name, emailVerificationToken);
+    await this.resendVerification(user.id);
 
     await this.prismaService.client.activityLog.create({
       data: {
@@ -83,33 +90,77 @@ export class AuthService {
     return { message: 'Registration successful. Please verify your email.' };
   }
 
-  async verifyEmail(dto: VerifyEmailDto): Promise<{ message: string }> {
-    const user = await this.prismaService.client.user.findFirst({
-      where: { emailVerificationToken: dto.token },
+  async verifyEmail(dto: VerifyEmailDto): Promise<{ message: string; alreadyVerified?: boolean }> {
+    const tokenHash = crypto.createHash('sha256').update(dto.token).digest('hex');
+    const tokenRecord = await this.prismaService.client.emailVerificationToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
     });
 
-    if (!user) {
+    if (!tokenRecord || tokenRecord.expiresAt < new Date()) {
       throw new BadRequestException('Invalid or expired verification token');
     }
+
+    const user = tokenRecord.user;
+
     if (user.isEmailVerified) {
-      throw new BadRequestException('Email already verified');
+      await this.prismaService.client.emailVerificationToken.delete({ where: { id: tokenRecord.id } });
+      return { message: 'Email already verified.', alreadyVerified: true };
     }
 
-    await this.prismaService.client.user.update({
-      where: { id: user.id },
-      data: { isEmailVerified: true, emailVerificationToken: null },
+    await this.prismaService.client.$transaction([
+      this.prismaService.client.user.update({
+        where: { id: user.id },
+        data: { isEmailVerified: true },
+      }),
+      this.prismaService.client.emailVerificationToken.delete({
+        where: { id: tokenRecord.id },
+      }),
+      this.prismaService.client.activityLog.create({
+        data: {
+          actorId: user.id,
+          entityType: 'user',
+          entityId: user.id,
+          action: 'email_verified',
+        },
+      }),
+    ]);
+
+    return { message: 'Email verified successfully.' };
+  }
+
+  async resendVerification(userId: string): Promise<{ message: string }> {
+    const user = await this.prismaService.client.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BadRequestException('User not found');
+    
+    if (user.isEmailVerified) {
+      throw new BadRequestException('Email is already verified');
+    }
+
+    await this.prismaService.client.emailVerificationToken.deleteMany({
+      where: { userId },
     });
 
-    await this.prismaService.client.activityLog.create({
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await this.prismaService.client.emailVerificationToken.create({
       data: {
-        actorId: user.id,
-        entityType: 'user',
-        entityId: user.id,
-        action: 'email_verified',
+        userId,
+        tokenHash,
+        expiresAt,
       },
     });
 
-    return { message: 'Email verified successfully.' };
+    try {
+      await this.mailerService.sendEmailVerification(user.email, user.name, rawToken);
+    } catch (err: any) {
+      this.logger.error(`Failed to send verification email to ${user.email}: ${err.message}`);
+      // Do not throw so that register flow isn't interrupted
+    }
+
+    return { message: 'Verification email resent.' };
   }
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -132,7 +183,6 @@ export class AuthService {
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (!user.isActive) throw new UnauthorizedException('Account is deactivated');
-    if (!user.isEmailVerified) throw new UnauthorizedException('Please verify your email before logging in');
 
     const isValid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!isValid) throw new UnauthorizedException('Invalid credentials');

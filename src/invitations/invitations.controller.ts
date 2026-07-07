@@ -4,6 +4,7 @@ import { InvitationsService } from './invitations.service';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OrgMemberGuard } from '../auth/guards/org-member.guard';
+import { EmailVerifiedGuard } from '../auth/guards/email-verified.guard';
 import { OrgRoles } from '../auth/decorators/org-roles.decorator';
 import { ProjectMemberGuard } from '../auth/guards/project-member.guard';
 import { ProjectRoles } from '../auth/decorators/project-roles.decorator';
@@ -22,7 +23,7 @@ export class InvitationsController {
   // ==========================================
   
   @Post('organizations/:orgId/invitations')
-  @UseGuards(OrgMemberGuard)
+  @UseGuards(EmailVerifiedGuard, OrgMemberGuard)
   @OrgRoles(OrgRole.OWNER, OrgRole.ADMIN)
   @ApiOperation({ summary: 'Send org invitation' })
   createOrgInvitation(
@@ -57,7 +58,7 @@ export class InvitationsController {
   // ==========================================
 
   @Post('organizations/:orgId/projects/:projectId/invitations')
-  @UseGuards(ProjectMemberGuard)
+  @UseGuards(EmailVerifiedGuard, ProjectMemberGuard)
   @ProjectRoles(ProjectRole.OWNER)
   @ApiOperation({ summary: 'Send project invitation' })
   createProjectInvitation(
